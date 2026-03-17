@@ -1,0 +1,26 @@
+# --- OS / IDE ---
+.DS_Store
+.vscode/
+.idea/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# --- Docker & Airflow ---
+# Ignore the actual database files (Postgres data)
+postgres_data/
+logs/
+plugins/
+airflow.db
+airflow.cfg
+webserver_config.py
+unittests.cfg
+
+# --- Project Specific ---
+# If your app generates any local csv or temp files
+*.csv
+*.log

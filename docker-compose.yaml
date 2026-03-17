@@ -1,0 +1,107 @@
+version: '3.8'
+x-airflow-common:
+  &airflow-common
+  image: apache/airflow:2.7.1
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW_POOL_STOCK_API_POOL: 1
+    # Redis Connection for Airflow
+    AIRFLOW_CONN_REDIS_DEFAULT: redis://redis:6379/0
+    # Postgres Connection for Airflow
+    AIRFLOW_CONN_POSTGRES_DEFAULT: postgres://airflow:airflow@postgres:5432/airflow
+    # Your API Key
+    STOCK_API_KEY: ${STOCK_API_KEY}
+    REDIS_HOST: redis
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    - postgres
+    - redis
+
+services:
+  postgres:
+    image: postgres:13
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.0-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 5
+
+  airflow-webserver:
+    <<: *airflow-common
+    environment:
+      <<: *airflow-common-env
+    command: webserver
+    restart: always
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash # Add this line to override the Airflow entrypoint
+    command: 
+      - -c
+      - |
+        airflow db migrate &&
+        airflow users create \
+          --username airflow \
+          --password airflow \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com || true &&
+        airflow pools set stock_api_pool 1 'Automated API Rate Limit Pool'
+
+  # --- MICROSERVICE COMPONENTS ---
+
+  ticker-worker:
+    image: python:3.11-slim
+    volumes:
+      - ./worker.py:/worker.py
+    environment:
+      - REDIS_HOST=redis
+      - STOCK_API_KEY=${STOCK_API_KEY}
+    command: sh -c "pip install redis requests && python /worker.py"
+    depends_on:
+      - redis
+
+  stock-ui:
+    image: python:3.11-slim
+    volumes:
+      - ./ui.py:/ui.py
+    environment:
+      - REDIS_HOST=redis
+    ports:
+      - "8501:8501"
+    command: sh -c "pip install streamlit redis streamlit-autorefresh && streamlit run /ui.py"
+    depends_on:
+      - redis
